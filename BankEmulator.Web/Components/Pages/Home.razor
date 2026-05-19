@@ -1,0 +1,773 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using BankEmulator.Domain
+@using BankEmulator.App
+@using BankEmulator.App.DTO
+@using System.IO
+@using System.Text.Json
+
+<PageTitle>Модернізований Банк-Дашборд</PageTitle>
+
+<style>
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    input[type=number] { -moz-appearance: textfield; }
+    
+    .glass-panel {
+        background: rgba(30, 30, 35, 0.85);
+        backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 25px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    .premium-card {
+        background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+        color: #000 !important;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(253, 160, 133, 0.4);
+    }
+    .premium-card h2, .premium-card p { color: #000 !important; }
+    
+    .sub-card {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px;
+        transition: 0.3s;
+    }
+    .sub-card:hover {
+        border-color: #ffc107;
+        transform: translateY(-2px);
+    }
+</style>
+
+@if (currentClient == null)
+{
+    <div class="text-center">
+        <div class="spinner-border text-success" role="status"></div>
+        <p class="mt-2 text-white">Завантаження банківської системи...</p>
+    </div>
+}
+else
+{
+    <div class="glass-panel animate fade-in">
+        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
+            <div>
+                <span class="white small text-uppercase tracking-wider">Вітаємо,</span>
+                <h3 class="mb-0 text-white fw-bold">👋 @currentClient.Name</h3>
+            </div>
+            
+            <div class="d-flex gap-3 align-items-center">
+                <button class="btn btn-outline-info fw-bold text-light" style="border-width: 2px;" @onclick="SimulateMonth">
+                    ⏳ Промотати 1 місяць
+                </button>
+
+                @if (IsPremiumActive)
+                {
+                    <span class="badge bg-warning text-dark px-3 py-2 fw-bold" style="font-size: 0.95rem; cursor: pointer;" @onclick='() => ActiveTab = "Premium"'>
+                        👑 Premium до @PremiumExpiryDate.ToString("dd.MM.yyyy")
+                    </span>
+                }
+                else
+                {
+                    <button class="btn btn-warning fw-bold text-dark px-4 py-2" style="box-shadow: 0 0 15px rgba(255,193,7,0.4);" @onclick='() => ActiveTab = "Premium"'>
+                        👑 Купити Premium
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="d-flex flex-wrap gap-2 mb-4">
+            <button class="btn @(ActiveTab == "Main" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "Main"'>
+                💳 Рахунок
+            </button>
+            <button class="btn @(ActiveTab == "Cashback" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "Cashback"'>
+                🎁 Кешбек
+            </button>
+            <button class="btn @(ActiveTab == "Deposit" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "Deposit"'>
+                📈 Депозити @(ActiveDepositPrincipal > 0 ? " active" : "")
+            </button>
+            <button class="btn @(ActiveTab == "Credit" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "Credit"'>
+                📉 Кредити @(CreditPrincipal > 0 ? " (!)" : "")
+            </button>
+            <button class="btn @(ActiveTab == "History" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "History"'>
+                📜 Історія
+            </button>
+        </div>
+
+        <div class="tab-content">
+            
+            @if (ActiveTab == "Main")
+            {
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="p-4 mb-4 @(IsPremiumActive ? "premium-card" : "")" 
+                             style="@(IsPremiumActive ? "" : "background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: white;")">
+                            <p style="opacity: 0.8; margin-bottom: 5px;">Поточний баланс картки</p>
+                            <h2 style="font-weight: bold; margin-bottom: 0;">@activeAccount.Balance.ToString("N2") ₴</h2>
+                        </div>
+                        
+                        <h5 class="text-white">Швидке поповнення</h5>
+                        <div class="input-group mb-3">
+                            <input type="number" class="form-control text-white" 
+                                   style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" 
+                                   @bind="ReplenishAmount" placeholder="Введіть суму..." min="1" />
+                            <button class="btn btn-success px-4" @onclick="ExecuteReplenish">Поповнити</button>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6 border-start border-secondary border-opacity-25 ps-md-4">
+                        <h5 class="text-white">Платежі та перекази</h5>
+                        
+                        <select class="form-select text-white mb-3 mt-3" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="TransferCategory">
+                            <option value="Card" style="color: black;">💳 На іншу картку</option>
+                            <option value="Mobile" style="color: black;">📱 Поповнення мобільного</option>
+                            <option value="Steam" style="color: black;">🎮 Акаунт Steam</option>
+                            <option value="ZSU" style="color: black;">🇺🇦 Донат на ЗСУ</option>
+                        </select>
+
+                        <label class="text-white form-label">@GetTargetLabel()</label>
+                        <input type="text" class="form-control text-white" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="TargetAccount" placeholder="@GetTargetPlaceholder()" />
+
+                        <label class="text-white form-label mt-3">Сума (грн)</label>
+                        <input type="number" class="form-control text-white" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="TransferAmount" min="1" />
+                        
+                        <button class="btn btn-primary w-100 py-2 mt-3" @onclick="ExecuteTransfer">Надіслати кошти</button>
+                    </div>
+                </div>
+
+                <div class="mt-5 border-top border-secondary border-opacity-25 pt-4">
+                    <h5 class="mb-3 text-white">Останні операції</h5>
+                    @if (!activeAccount.TransactionHistory.Any())
+                    {
+                        <p class="text-muted small">Транзакцій ще не було</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-dark table-hover table-borderless small align-middle">
+                                <thead>
+                                    <tr class="text-muted border-bottom border-secondary border-opacity-25">
+                                        <th>Дата</th>
+                                        <th>Тип</th>
+                                        <th class="text-end">Сума</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var t in activeAccount.TransactionHistory.OrderByDescending(x => x.Date).Take(5))
+                                    {
+                                        <tr>
+                                            <td>@t.Date.ToString("g")</td>
+                                            <td><span class="badge @(t.Type == TransactionType.Deposit ? "bg-success" : "bg-danger") bg-opacity-10 text-@(t.Type == TransactionType.Deposit ? "success" : "danger")">@t.Type</span></td>
+                                            <td class="text-end fw-bold @(t.Type == TransactionType.Deposit ? "text-success" : "text-danger")">@(t.Type == TransactionType.Deposit ? "+" : "-")@t.Amount.ToString("N2") ₴</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (ActiveTab == "Cashback")
+            {
+                <div class="text-center py-4">
+                    <h2 class="text-white mb-1">🎁 Твій Накопичений Кешбек</h2>
+                    <p class="text-muted mb-4">Нараховується 2% з усіх переказів за наявності Premium!</p>
+                    <h1 class="display-4 fw-bold text-success mb-4">@CashbackBalance.ToString("N2") ₴</h1>
+                    <button class="btn btn-lg btn-success px-5 py-3 fw-bold" disabled="@(CashbackBalance < 250)" @onclick="WithdrawCashback">
+                        Вивести гроші на картку
+                    </button>
+                    <p class="text-muted small mt-3">Мінімум для виводу: 250 ₴</p>
+                </div>
+            }
+
+            @if (ActiveTab == "Premium")
+            {
+                <div class="text-center">
+                    <h2 class="text-warning fw-bold mb-2">👑 Тарифи Premium Підписки</h2>
+                    
+                    @if (IsPremiumActive)
+                    {
+                        <div class="alert alert-success mt-4 p-4 mx-auto" style="max-width: 500px; background: rgba(25, 135, 84, 0.2); border: 1px solid #198754; border-radius: 12px;">
+                            <h4 class="text-white mb-2">✨ У вас вже активовано Premium!</h4>
+                            <p class="text-white-50 mb-0">Усі переваги увімкнені. Ваша підписка діє до: <strong class="text-warning">@PremiumExpiryDate.ToString("dd.MM.yyyy")</strong></p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row g-4 mb-5 mt-2">
+                            <div class="col-md-4">
+                                <div class="p-4 sub-card text-white">
+                                    <h4>1 Місяць</h4>
+                                    <h2 class="my-3 text-warning">150 ₴</h2>
+                                    <button class="btn btn-outline-warning w-100" @onclick="() => BuyPremiumSubscription(1, 150)">Обрати</button>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="p-4 sub-card text-white border-warning">
+                                    <span class="badge bg-danger mb-2">ХІТ 🔥 -15%</span>
+                                    <h4 class="text-warning">6 Місяців</h4>
+                                    <h2 class="my-2">765 ₴</h2>
+                                    <button class="btn btn-warning text-dark fw-bold w-100 mt-2" @onclick="() => BuyPremiumSubscription(6, 765)">Обрати план</button>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="p-4 sub-card text-white">
+                                    <span class="badge bg-success mb-2">-30% Економія</span>
+                                    <h4>1 Рік</h4>
+                                    <h2 class="my-2 text-success">1260 ₴</h2>
+                                    <button class="btn btn-outline-success w-100 mt-2" @onclick="() => BuyPremiumSubscription(12, 1260)">Обрати план</button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (ActiveTab == "Deposit")
+            {
+                <div class="row g-4 text-white">
+                    <div class="col-md-6">
+                        <h4>📈 Відкриття депозиту</h4>
+                        @if (IsPremiumActive) { <div class="alert alert-warning py-1 small">⚡ Ставка: 15% річних (Premium)</div> }
+                        else { <div class="alert alert-secondary py-1 small">Стандартна ставка: 10% річних</div> }
+
+                        <div class="mb-3">
+                            <label class="form-label text-white-50">Сума для вкладу (грн):</label>
+                            <input type="number" class="form-control text-white" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="DepositInputAmount" min="100" />
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="form-label text-white-50">Термін вкладу (місяців):</label>
+                            <div class="d-flex align-items-center gap-3">
+                                <input type="range" class="form-range w-50" min="1" max="36" @bind="DepositMonths" @bind:event="oninput" />
+                                <div class="input-group w-50">
+                                    <input type="number" class="form-control text-white text-center" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="DepositMonths" @bind:event="oninput" min="1" max="36" />
+                                    <span class="input-group-text bg-dark text-white-50 border-secondary">міс.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-3 mb-3 rounded" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05);">
+                            <span class="text-muted small">Прогнозований прибуток за весь час:</span>
+                            <h3 class="text-success fw-bold mb-0">+ @CalculateProjectedProfit().ToString("N2") ₴</h3>
+                        </div>
+
+                        <button class="btn btn-success w-100 py-2 fw-bold" @onclick="CreateDeposit">💰 Відкрити депозит</button>
+                    </div>
+
+                    <div class="col-md-6 border-start border-secondary border-opacity-25 ps-md-4">
+                        <h4>🏦 Мій активний депозит</h4>
+                        @if (ActiveDepositPrincipal == 0)
+                        {
+                            <p class="text-muted mt-4">Немає активних депозитів.</p>
+                        }
+                        else
+                        {
+                            <div class="p-4 rounded-3 mt-3" style="background: rgba(25, 135, 84, 0.1); border: 1px solid #198754;">
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-white-50">Тіло вкладу:</span>
+                                    <span class="fw-bold">@ActiveDepositPrincipal.ToString("N2") ₴</span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-3 border-bottom border-success border-opacity-25 pb-2">
+                                    <span class="text-success">Накапало відсотків:</span>
+                                    <span class="text-success fw-bold">+ @ActiveDepositAccumulatedInterest.ToString("N2") ₴</span>
+                                </div>
+                                <p class="text-muted small mb-3">Минуло місяців: @DepositMonthsPassed / @TargetDepositMonths</p>
+                                
+                                <button class="btn btn-outline-success w-100" @onclick="CloseDeposit">Закрити та забрати гроші</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (ActiveTab == "Credit")
+            {
+                <div class="row g-4 text-white">
+                    <div class="col-md-6">
+                        <h4>📉 Оформити кредит</h4>
+                        @if (IsPremiumActive) { <div class="alert alert-success py-1 small">🎉 Ставка: 18% річних (Premium)</div> }
+                        else { <div class="alert alert-danger py-1 small">Стандартна ставка: 25% річних</div> }
+
+                        <div class="mb-3">
+                            <label class="form-label text-white-50">Потрібна сума (грн):</label>
+                            <input type="number" class="form-control text-white" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="CreditInputAmount" min="100" />
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="form-label text-white-50">Орієнтовний термін (місяців):</label>
+                            <div class="d-flex align-items-center gap-3">
+                                <input type="range" class="form-range w-50" min="1" max="36" @bind="CreditMonths" @bind:event="oninput" />
+                                <div class="input-group w-50">
+                                    <input type="number" class="form-control text-white text-center" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);" @bind="CreditMonths" @bind:event="oninput" min="1" max="36" />
+                                    <span class="input-group-text bg-dark text-white-50 border-secondary">міс.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-danger w-100 py-2 fw-bold" @onclick="TakeCredit">💸 Взяти кредит</button>
+                    </div>
+
+                    <div class="col-md-6 border-start border-secondary border-opacity-25 ps-md-4">
+                        <h4>🚨 Мій кредит</h4>
+                        @if (CreditPrincipal == 0)
+                        {
+                            <div class="p-4 text-center text-muted">Ви нічого не винні банку!</div>
+                        }
+                        else
+                        {
+                            <div class="p-4 rounded-3 mt-3" style="background: rgba(220, 53, 69, 0.1); border: 1px solid #dc3545;">
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-white-50">Залишок тіла кредиту:</span>
+                                    <span class="fw-bold">@CreditPrincipal.ToString("N2") ₴</span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-3 border-bottom border-danger border-opacity-25 pb-2">
+                                    <span class="text-danger">Нараховані відсотки (Борг):</span>
+                                    <span class="text-danger fw-bold">@CreditAccumulatedInterest.ToString("N2") ₴</span>
+                                </div>
+                                
+                                <div class="input-group mb-2 mt-3">
+                                    <input type="number" class="form-control text-white bg-dark border-secondary" @bind="RepayAmount" placeholder="Повна сума боргу..." min="1" />
+                                    <button class="btn btn-danger" @onclick="RepayCreditPartial">Оплатити</button>
+                                </div>
+                                <span class="text-muted small">За замовчуванням підставлено повний борг. Гасить спочатку відсотки, потім тіло.</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (ActiveTab == "History")
+            {
+                <div>
+                    <h4 class="text-white mb-3">Уся історія</h4>
+                    @if (!activeAccount.TransactionHistory.Any())
+                    {
+                        <p class="text-muted">Транзакцій ще не було</p>
+                    }
+                    else
+                    {
+                        <table class="table table-dark table-hover table-borderless small">
+                            <thead><tr class="text-muted border-bottom border-secondary"><th>Дата</th><th>Тип</th><th class="text-end">Сума</th></tr></thead>
+                            <tbody>
+                                @foreach (var t in activeAccount.TransactionHistory.OrderByDescending(x => x.Date))
+                                {
+                                    <tr>
+                                        <td>@t.Date.ToString("g")</td>
+                                        <td><span class="badge @(t.Type == TransactionType.Deposit ? "bg-success" : "bg-danger") bg-opacity-10 text-@(t.Type == TransactionType.Deposit ? "success" : "danger")">@t.Type</span></td>
+                                        <td class="text-end fw-bold @(t.Type == TransactionType.Deposit ? "text-success" : "text-danger")">@(t.Type == TransactionType.Deposit ? "+" : "-")@t.Amount.ToString("N2") ₴</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(SystemMessage))
+{
+    <div style="position: fixed; top: 20px; right: 20px; z-index: 9999; background: rgba(0, 0, 0, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); border-left: 4px solid #0dcaf0; border-radius: 10px; padding: 15px 20px; color: white; min-width: 320px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div>
+                <strong>Банк</strong><br />
+                <span style="font-size: 0.95rem;">@SystemMessage</span><br />
+            </div>
+            <button type="button" class="btn-close btn-close-white" style="font-size: 0.8rem;" @onclick='() => SystemMessage = string.Empty'></button>
+        </div>
+    </div>
+}
+
+@code {
+    private string ActiveTab { get; set; } = "Main";
+    private string SystemMessage { get; set; } = "";
+    private decimal ReplenishAmount { get; set; }
+    private decimal TransferAmount { get; set; }
+    private string TransferCategory { get; set; } = "Card";
+    private string TargetAccount { get; set; } = "";
+    private bool IsPremiumActive { get; set; } = false;
+    private DateTime PremiumExpiryDate { get; set; } = DateTime.Now;
+    private decimal CashbackBalance { get; set; } = 0.00m; 
+    private decimal DepositInputAmount { get; set; } = 10000;
+    private int DepositMonths { get; set; } = 12;
+    private decimal ActiveDepositPrincipal { get; set; } = 0;
+    private decimal ActiveDepositAccumulatedInterest { get; set; } = 0;
+    private int TargetDepositMonths { get; set; } = 0;
+    private int DepositMonthsPassed { get; set; } = 0;
+    private decimal CreditInputAmount { get; set; } = 20000;
+    private int CreditMonths { get; set; } = 12;
+    private decimal CreditPrincipal { get; set; } = 0;
+    private decimal CreditAccumulatedInterest { get; set; } = 0;
+    private int TargetCreditMonths { get; set; } = 0;
+    private int CreditMonthsPassed { get; set; } = 0;
+    private decimal RepayAmount { get; set; } = 0;
+    private FileStorage storage = new FileStorage();
+    private BankEmulator.Domain.Client currentClient;
+    private Account activeAccount;
+    private List<BankEmulator.Domain.Client> allClientsInSystem = new List<BankEmulator.Domain.Client>();
+
+    public class ExtraState
+    {
+        public bool IsPremiumActive { get; set; }
+        public DateTime PremiumExpiryDate { get; set; }
+        public decimal CashbackBalance { get; set; }
+        public decimal ActiveDepositPrincipal { get; set; }
+        public decimal ActiveDepositAccumulatedInterest { get; set; }
+        public int TargetDepositMonths { get; set; }
+        public int DepositMonthsPassed { get; set; }
+        public decimal CreditPrincipal { get; set; }
+        public decimal CreditAccumulatedInterest { get; set; }
+        public int TargetCreditMonths { get; set; }
+        public int CreditMonthsPassed { get; set; }
+        public decimal RepayAmount { get; set; }
+    }
+
+    private void SaveExtraState()
+    {
+        try
+        {
+            var state = new ExtraState
+            {
+                IsPremiumActive = IsPremiumActive,
+                PremiumExpiryDate = PremiumExpiryDate,
+                CashbackBalance = CashbackBalance,
+                ActiveDepositPrincipal = ActiveDepositPrincipal,
+                ActiveDepositAccumulatedInterest = ActiveDepositAccumulatedInterest,
+                TargetDepositMonths = TargetDepositMonths,
+                DepositMonthsPassed = DepositMonthsPassed,
+                CreditPrincipal = CreditPrincipal,
+                CreditAccumulatedInterest = CreditAccumulatedInterest,
+                TargetCreditMonths = TargetCreditMonths,
+                CreditMonthsPassed = CreditMonthsPassed,
+                RepayAmount = RepayAmount
+            };
+            string json = JsonSerializer.Serialize(state);
+            File.WriteAllText("extra_bank_state.json", json);
+        }
+        catch { }
+    }
+
+    private void LoadExtraState()
+    {
+        try
+        {
+            if (File.Exists("extra_bank_state.json"))
+            {
+                string json = File.ReadAllText("extra_bank_state.json");
+                var state = JsonSerializer.Deserialize<ExtraState>(json);
+                if (state != null)
+                {
+                    IsPremiumActive = state.IsPremiumActive;
+                    PremiumExpiryDate = state.PremiumExpiryDate;
+                    CashbackBalance = state.CashbackBalance;
+                    ActiveDepositPrincipal = state.ActiveDepositPrincipal;
+                    ActiveDepositAccumulatedInterest = state.ActiveDepositAccumulatedInterest;
+                    TargetDepositMonths = state.TargetDepositMonths;
+                    DepositMonthsPassed = state.DepositMonthsPassed;
+                    CreditPrincipal = state.CreditPrincipal;
+                    CreditAccumulatedInterest = state.CreditAccumulatedInterest;
+                    TargetCreditMonths = state.TargetCreditMonths;
+                    CreditMonthsPassed = state.CreditMonthsPassed;
+                    RepayAmount = state.RepayAmount;
+                }
+            }
+        }
+        catch { }
+    }
+
+private void SaveAllData()
+    {
+        var dtosToSave = new List<ClientDto>();
+
+        foreach (var client in allClientsInSystem)
+        {
+            var clientDto = new ClientDto
+            {
+                Id = client.Id,
+                Name = client.Name,
+                Accounts = new List<AccountDto>()
+            };
+
+            foreach (var acc in client.Accounts)
+            {
+                var accDto = new AccountDto
+                {
+                    AccountNumber = acc.AccountNumber,
+                    Balance = acc.Balance,
+                    AccountType = acc is PremiumAccount ? "PremiumAccount" : "StandardAccount",
+                    Transactions = new List<TransactionDto>()
+                };
+
+                foreach (var t in acc.TransactionHistory)
+                {
+                    accDto.Transactions.Add(new TransactionDto
+                    {
+                        Id = t.Id,
+                        Amount = t.Amount,
+                        Type = t.Type,
+                        Date = t.Date
+                    });
+                }
+                
+                clientDto.Accounts.Add(accDto);
+            }
+            dtosToSave.Add(clientDto);
+        }
+
+        storage.SaveClients(dtosToSave);
+        
+        SaveExtraState();
+    }
+
+    protected override void OnInitialized()
+    {
+        LoadBankSystem();
+    }
+
+    private string GetTargetLabel() => TransferCategory switch {
+        "Mobile" => "Номер телефону", "Steam" => "Юзернейм", "ZSU" => "Коментар", _ => "Номер картки"
+    };
+
+    private string GetTargetPlaceholder() => TransferCategory switch {
+        "Mobile" => "+380...", "Steam" => "Логін...", "ZSU" => "Разом до перемоги! 🇺🇦", _ => "4441 1111..."
+    };
+
+    private void LoadBankSystem()
+    {
+        var dtos = storage.LoadClients();
+        if (dtos == null || dtos.Count == 0)
+        {
+            var defaultClient = new BankEmulator.Domain.Client("Олександр Ковальчук");
+            var newAcc = new StandardAccount("UA1122334455", 25000, new DepositStrategy());
+            defaultClient.Accounts.Add(newAcc);
+            allClientsInSystem.Add(defaultClient);
+            currentClient = defaultClient;
+            activeAccount = newAcc;
+            SaveAllData();
+        }
+        else
+        {
+            allClientsInSystem = new List<BankEmulator.Domain.Client>();
+            foreach (var cDto in dtos)
+            {
+                var domClient = new BankEmulator.Domain.Client(cDto.Id, cDto.Name);
+                foreach (var aDto in cDto.Accounts)
+                {
+                    Account domAcc = aDto.AccountType == "PremiumAccount"
+                        ? new PremiumAccount(aDto.AccountNumber, aDto.Balance, new DepositStrategy())
+                        : new StandardAccount(aDto.AccountNumber, aDto.Balance, new DepositStrategy());
+
+                    foreach (var tDto in aDto.Transactions) { domAcc.TransactionHistory.Add(new Transaction(tDto.Id, tDto.Amount, tDto.Type, tDto.Date)); }
+                    domClient.Accounts.Add(domAcc);
+                }
+                allClientsInSystem.Add(domClient);
+            }
+            currentClient = allClientsInSystem.First();
+            activeAccount = currentClient.Accounts.First();
+            
+            LoadExtraState();
+            if(IsPremiumActive && !(activeAccount is PremiumAccount))
+            {
+                UpgradeToPremiumSilent();
+            }
+        }
+    }
+
+    private void UpgradeToPremiumSilent()
+    {
+        var premiumAcc = new PremiumAccount(activeAccount.AccountNumber, activeAccount.Balance, new DepositStrategy());
+        premiumAcc.TransactionHistory.Clear(); premiumAcc.TransactionHistory.AddRange(activeAccount.TransactionHistory);
+        var accIndex = currentClient.Accounts.FindIndex(a => a.AccountNumber == activeAccount.AccountNumber);
+        if (accIndex != -1) { currentClient.Accounts[accIndex] = premiumAcc; activeAccount = premiumAcc; }
+    }
+
+    private void ExecuteReplenish() {
+        if (ReplenishAmount <= 0) return;
+        activeAccount.Deposit(ReplenishAmount);
+        SaveAllData();
+        SystemMessage = $"Поповнено на {ReplenishAmount:N2} ₴!";
+        ReplenishAmount = 0;
+    }
+
+    private void ExecuteTransfer() {
+        if (TransferAmount <= 0 || activeAccount.Balance < TransferAmount) { SystemMessage = "❌ Недостатньо коштів!"; return; }
+        activeAccount.Withdraw(TransferAmount);
+        if (IsPremiumActive && TransferCategory != "ZSU") {
+            CashbackBalance += TransferAmount * 0.02m; 
+            SystemMessage = $"✅ Переказ успішний! Кешбек нараховано.";
+        } else { SystemMessage = "✅ Переказ виконано!"; }
+        SaveAllData(); TransferAmount = 0; TargetAccount = "";
+    }
+
+    private void BuyPremiumSubscription(int months, decimal cost) {
+        if (activeAccount.Balance < cost) { SystemMessage = "❌ Недостатньо коштів!"; return; }
+        activeAccount.Withdraw(cost);
+        IsPremiumActive = true;
+        PremiumExpiryDate = PremiumExpiryDate < DateTime.Now ? DateTime.Now.AddMonths(months) : PremiumExpiryDate.AddMonths(months);
+        UpgradeToPremiumSilent();
+        SaveAllData();
+        SystemMessage = "🎉 Premium успішно оформлено!"; ActiveTab = "Main";
+    }
+
+    private void WithdrawCashback() {
+        if (CashbackBalance >= 250) { activeAccount.Deposit(CashbackBalance); SaveAllData(); SystemMessage = "💰 Кешбек виведено!"; CashbackBalance = 0; }
+    }
+
+    private void DowngradeToStandard()
+    {
+        var stdAcc = new StandardAccount(activeAccount.AccountNumber, activeAccount.Balance, new DepositStrategy());
+        stdAcc.TransactionHistory.Clear(); 
+        stdAcc.TransactionHistory.AddRange(activeAccount.TransactionHistory);
+        var accIndex = currentClient.Accounts.FindIndex(a => a.AccountNumber == activeAccount.AccountNumber);
+        if (accIndex != -1) { currentClient.Accounts[accIndex] = stdAcc; activeAccount = stdAcc; }
+        SaveAllData();
+    }
+
+    private void SimulateMonth()
+    {
+        bool somethingHappened = false;
+
+        if (IsPremiumActive)
+        {
+            PremiumExpiryDate = PremiumExpiryDate.AddMonths(-1);
+            somethingHappened = true;
+            
+            if (PremiumExpiryDate <= DateTime.Now)
+            {
+                IsPremiumActive = false;
+                DowngradeToStandard();
+                SystemMessage = "⏳ Минув 1 місяць! ❌ Термін дії Premium вичерпано!";
+            }
+        }
+
+        if (CreditPrincipal > 0)
+        {
+            decimal annualRate = IsPremiumActive ? 0.18m : 0.25m;
+            decimal monthlyInterest = CreditPrincipal * (annualRate / 12.0m);
+            CreditAccumulatedInterest += monthlyInterest;
+            CreditMonthsPassed++;
+            activeAccount.TransactionHistory.Add(new Transaction(Guid.NewGuid(), Math.Round(monthlyInterest, 2), TransactionType.Withdrawal, DateTime.Now));            
+            RepayAmount = Math.Round(CreditPrincipal + CreditAccumulatedInterest, 2); 
+            somethingHappened = true;
+        }
+
+        if (ActiveDepositPrincipal > 0)
+        {
+            decimal annualRate = IsPremiumActive ? 0.15m : 0.10m;
+            decimal monthlyInterest = ActiveDepositPrincipal * (annualRate / 12.0m);
+            ActiveDepositAccumulatedInterest += monthlyInterest;
+            DepositMonthsPassed++;
+            activeAccount.TransactionHistory.Add(new Transaction(Guid.NewGuid(), Math.Round(monthlyInterest, 2), TransactionType.Deposit, DateTime.Now));
+            somethingHappened = true;
+        }
+
+        if (SystemMessage.Contains("Термін дії Premium вичерпано!")) 
+        {
+        }
+        else if (somethingHappened) 
+        { 
+            SystemMessage = "⏳ Минув 1 місяць! Відсотки записано в історію та оновлено."; 
+        }
+        else 
+        { 
+            SystemMessage = "⏳ Минув 1 місяць... Але у вас немає кредитів, депозитів чи підписок."; 
+        }
+
+        SaveAllData();
+    }
+
+    private decimal CalculateProjectedProfit()
+    {
+        decimal annualRate = IsPremiumActive ? 0.15m : 0.10m;
+        return DepositInputAmount * annualRate * (DepositMonths / 12.0m);
+    }
+
+    private void CreateDeposit()
+    {
+        if (ActiveDepositPrincipal > 0) { SystemMessage = "❌ У вас вже є відкритий депозит!"; return; }
+        if (DepositInputAmount < 100 || activeAccount.Balance < DepositInputAmount) { SystemMessage = "❌ Недостатньо коштів або сума < 100!"; return; }
+
+        activeAccount.Withdraw(DepositInputAmount);
+        ActiveDepositPrincipal = DepositInputAmount;
+        TargetDepositMonths = DepositMonths;
+        DepositMonthsPassed = 0;
+        SaveAllData();
+        SystemMessage = $"📈 Депозит на {DepositInputAmount:N2} ₴ відкрито!";
+    }
+
+    private void CloseDeposit()
+    {
+        decimal total = ActiveDepositPrincipal + ActiveDepositAccumulatedInterest;
+        activeAccount.Deposit(total);
+        SystemMessage = $"✅ Депозит закрито! Повернуто {total:N2} ₴.";
+        ActiveDepositPrincipal = 0; ActiveDepositAccumulatedInterest = 0;
+        SaveAllData();
+    }
+
+    private void TakeCredit()
+    {
+        if (CreditPrincipal > 0) { SystemMessage = "❌ Спершу погасіть існуючий кредит!"; return; }
+        if (CreditInputAmount <= 0) return;
+
+        CreditPrincipal = CreditInputAmount;
+        TargetCreditMonths = CreditMonths;
+        CreditMonthsPassed = 0;
+        
+        RepayAmount = CreditPrincipal; 
+
+        activeAccount.Deposit(CreditInputAmount);
+        SaveAllData();
+        SystemMessage = $"💸 Видано кредит на {CreditInputAmount:N2} ₴!";
+    }
+
+    private void RepayCreditPartial()
+    {
+        if (RepayAmount <= 0) return;
+        if (activeAccount.Balance < RepayAmount) { SystemMessage = "❌ Недостатньо коштів на балансі!"; return; }
+
+        activeAccount.Withdraw(RepayAmount);
+        decimal remaining = RepayAmount;
+
+        if (remaining >= CreditAccumulatedInterest) {
+            remaining -= CreditAccumulatedInterest;
+            CreditAccumulatedInterest = 0;
+        } else {
+            CreditAccumulatedInterest -= remaining;
+            remaining = 0;
+        }
+
+        if (remaining > 0) {
+            if (remaining >= CreditPrincipal) {
+                remaining -= CreditPrincipal; 
+                CreditPrincipal = 0;
+                
+                if (remaining > 0) 
+                {
+                    activeAccount.Deposit(remaining); 
+                    SystemMessage = $"🎉 Кредит повністю погашено! Здача {Math.Round(remaining, 2)} ₴ повернута на картку.";
+                }
+                else
+                {
+                    SystemMessage = "🎉 Кредит повністю погашено без здачі!";
+                }
+            } else {
+                CreditPrincipal -= remaining;
+                SystemMessage = $"✅ Оплата пройшла! Тіло кредиту зменшилось.";
+            }
+        } else {
+            SystemMessage = $"✅ Сплачено відсотки по кредиту.";
+        }
+
+        RepayAmount = (CreditPrincipal > 0) ? Math.Round(CreditPrincipal + CreditAccumulatedInterest, 2) : 0;
+        
+        SaveAllData();
+    }
+}

@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="BankEmulator.App/BankEmulator.App.csproj" />
+  <Project Path="BankEmulator.Domain/BankEmulator.Domain.csproj" />
+  <Project Path="BankEmulator.Tests/BankEmulator.Tests.csproj" />
+  <Project Path="BankEmulator.Web/BankEmulator.Web.csproj" />
+</Solution>
