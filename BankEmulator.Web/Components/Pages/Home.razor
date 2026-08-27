@@ -92,7 +92,7 @@ else
                 📈 Депозити @(ActiveDepositPrincipal > 0 ? " active" : "")
             </button>
             <button class="btn @(ActiveTab == "Credit" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "Credit"'>
-                📉 Кредити @(CreditPrincipal > 0 ? " (!)" : "")
+                📉 Кредити @(CreditTotalDebt > 0 ? " (!)" : "")
             </button>
             <button class="btn @(ActiveTab == "History" ? "btn-light text-dark fw-bold" : "text-white-50 border-0")" @onclick='() => ActiveTab = "History"'>
                 📜 Історія
@@ -292,8 +292,7 @@ else
                 <div class="row g-4 text-white">
                     <div class="col-md-6">
                         <h4>📉 Оформити кредит</h4>
-                        @if (IsPremiumActive) { <div class="alert alert-success py-1 small">🎉 Ставка: 18% річних (Premium)</div> }
-                        else { <div class="alert alert-danger py-1 small">Стандартна ставка: 25% річних</div> }
+                        <div class="alert alert-info py-1 small">Фіксована ставка: 10% річних</div>
 
                         <div class="mb-3">
                             <label class="form-label text-white-50">Потрібна сума (грн):</label>
@@ -311,12 +310,17 @@ else
                             </div>
                         </div>
 
+                        <div class="p-3 mb-3 rounded" style="background: rgba(223, 223, 223, 0.2); border: 1px solid rgba(255,255,255,0.05);">
+                            <span class="text-muted small">Орієнтовний щомісячний платіж:</span>
+                            <h4 class="text-warning fw-bold mb-0">~ @CalculateMonthlyPaymentPreview().ToString("N2") ₴ / міс.</h4>
+                        </div>
+
                         <button class="btn btn-danger w-100 py-2 fw-bold" @onclick="TakeCredit">💸 Взяти кредит</button>
                     </div>
 
                     <div class="col-md-6 border-start border-secondary border-opacity-25 ps-md-4">
                         <h4>🚨 Мій кредит</h4>
-                        @if (CreditPrincipal == 0)
+                        @if (CreditTotalDebt == 0)
                         {
                             <div class="p-4 text-center text-muted">Ви нічого не винні банку!</div>
                         }
@@ -324,19 +328,19 @@ else
                         {
                             <div class="p-4 rounded-3 mt-3" style="background: rgba(220, 53, 69, 0.1); border: 1px solid #dc3545;">
                                 <div class="d-flex justify-content-between mb-2">
-                                    <span class="text-white-50">Залишок тіла кредиту:</span>
-                                    <span class="fw-bold">@CreditPrincipal.ToString("N2") ₴</span>
+                                    <span class="text-white-50">Загальний борг з %:</span>
+                                    <span class="fw-bold text-danger">@CreditTotalDebt.ToString("N2") ₴</span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-white-50">Щомісячний платіж:</span>
+                                    <span class="fw-bold text-warning">@MonthlyCreditPayment.ToString("N2") ₴ / міс.</span>
                                 </div>
                                 <div class="d-flex justify-content-between mb-3 border-bottom border-danger border-opacity-25 pb-2">
-                                    <span class="text-danger">Нараховані відсотки (Борг):</span>
-                                    <span class="text-danger fw-bold">@CreditAccumulatedInterest.ToString("N2") ₴</span>
+                                    <span class="text-white-50">Сплачено місяців:</span>
+                                    <span>@CreditMonthsPassed / @TargetCreditMonths</span>
                                 </div>
-                                
-                                <div class="input-group mb-2 mt-3">
-                                    <input type="number" class="form-control text-white bg-dark border-secondary" @bind="RepayAmount" placeholder="Повна сума боргу..." min="1" />
-                                    <button class="btn btn-danger" @onclick="RepayCreditPartial">Оплатити</button>
-                                </div>
-                                <span class="text-muted small">За замовчуванням підставлено повний борг. Гасить спочатку відсотки, потім тіло.</span>
+
+                                <button class="btn btn-outline-danger w-100 mt-2" @onclick="RepayCreditEarly">Погасити кредит достроково</button>
                             </div>
                         }
                     </div>
@@ -402,13 +406,15 @@ else
     private decimal ActiveDepositAccumulatedInterest { get; set; } = 0;
     private int TargetDepositMonths { get; set; } = 0;
     private int DepositMonthsPassed { get; set; } = 0;
+    
     private decimal CreditInputAmount { get; set; } = 20000;
     private int CreditMonths { get; set; } = 12;
     private decimal CreditPrincipal { get; set; } = 0;
-    private decimal CreditAccumulatedInterest { get; set; } = 0;
+    private decimal CreditTotalDebt { get; set; } = 0;
+    private decimal MonthlyCreditPayment { get; set; } = 0;
     private int TargetCreditMonths { get; set; } = 0;
     private int CreditMonthsPassed { get; set; } = 0;
-    private decimal RepayAmount { get; set; } = 0;
+    
     private FileStorage storage = new FileStorage();
     private BankEmulator.Domain.Client currentClient;
     private Account activeAccount;
@@ -424,10 +430,10 @@ else
         public int TargetDepositMonths { get; set; }
         public int DepositMonthsPassed { get; set; }
         public decimal CreditPrincipal { get; set; }
-        public decimal CreditAccumulatedInterest { get; set; }
+        public decimal CreditTotalDebt { get; set; }
+        public decimal MonthlyCreditPayment { get; set; }
         public int TargetCreditMonths { get; set; }
         public int CreditMonthsPassed { get; set; }
-        public decimal RepayAmount { get; set; }
     }
 
     private void SaveExtraState()
@@ -444,10 +450,10 @@ else
                 TargetDepositMonths = TargetDepositMonths,
                 DepositMonthsPassed = DepositMonthsPassed,
                 CreditPrincipal = CreditPrincipal,
-                CreditAccumulatedInterest = CreditAccumulatedInterest,
+                CreditTotalDebt = CreditTotalDebt,
+                MonthlyCreditPayment = MonthlyCreditPayment,
                 TargetCreditMonths = TargetCreditMonths,
-                CreditMonthsPassed = CreditMonthsPassed,
-                RepayAmount = RepayAmount
+                CreditMonthsPassed = CreditMonthsPassed
             };
             string json = JsonSerializer.Serialize(state);
             File.WriteAllText("extra_bank_state.json", json);
@@ -473,17 +479,17 @@ else
                     TargetDepositMonths = state.TargetDepositMonths;
                     DepositMonthsPassed = state.DepositMonthsPassed;
                     CreditPrincipal = state.CreditPrincipal;
-                    CreditAccumulatedInterest = state.CreditAccumulatedInterest;
+                    CreditTotalDebt = state.CreditTotalDebt;
+                    MonthlyCreditPayment = state.MonthlyCreditPayment;
                     TargetCreditMonths = state.TargetCreditMonths;
                     CreditMonthsPassed = state.CreditMonthsPassed;
-                    RepayAmount = state.RepayAmount;
                 }
             }
         }
         catch { }
     }
 
-private void SaveAllData()
+    private void SaveAllData()
     {
         var dtosToSave = new List<ClientDto>();
 
@@ -523,7 +529,6 @@ private void SaveAllData()
         }
 
         storage.SaveClients(dtosToSave);
-        
         SaveExtraState();
     }
 
@@ -584,7 +589,8 @@ private void SaveAllData()
     private void UpgradeToPremiumSilent()
     {
         var premiumAcc = new PremiumAccount(activeAccount.AccountNumber, activeAccount.Balance, new DepositStrategy());
-        premiumAcc.TransactionHistory.Clear(); premiumAcc.TransactionHistory.AddRange(activeAccount.TransactionHistory);
+        premiumAcc.TransactionHistory.Clear(); 
+        premiumAcc.TransactionHistory.AddRange(activeAccount.TransactionHistory);
         var accIndex = currentClient.Accounts.FindIndex(a => a.AccountNumber == activeAccount.AccountNumber);
         if (accIndex != -1) { currentClient.Accounts[accIndex] = premiumAcc; activeAccount = premiumAcc; }
     }
@@ -631,6 +637,34 @@ private void SaveAllData()
         SaveAllData();
     }
 
+    private decimal CalculateMonthlyPaymentPreview()
+    {
+        if (CreditMonths <= 0) return 0;
+        decimal rate = 0.10m;
+        decimal totalWithInterest = CreditInputAmount + (CreditInputAmount * rate);
+        return Math.Round(totalWithInterest / CreditMonths, 2);
+    }
+
+    private void TakeCredit()
+    {
+        if (CreditTotalDebt > 0) { SystemMessage = "❌ Спершу погасіть існуючий кредит!"; return; }
+        if (CreditInputAmount <= 0 || CreditMonths <= 0) return;
+
+        decimal rate = 0.10m; // 10%
+        CreditPrincipal = CreditInputAmount;
+        
+        decimal totalInterest = CreditInputAmount * rate; 
+        CreditTotalDebt = CreditInputAmount + totalInterest; 
+        TargetCreditMonths = CreditMonths;
+        CreditMonthsPassed = 0;
+        
+        MonthlyCreditPayment = Math.Round(CreditTotalDebt / TargetCreditMonths, 2); 
+
+        activeAccount.Deposit(CreditInputAmount);
+        SaveAllData();
+        SystemMessage = $"💸 Кредит видано! Щомісячний платіж складе: {MonthlyCreditPayment:N2} ₴.";
+    }
+
     private void SimulateMonth()
     {
         bool somethingHappened = false;
@@ -648,15 +682,33 @@ private void SaveAllData()
             }
         }
 
-        if (CreditPrincipal > 0)
+        if (CreditTotalDebt > 0)
         {
-            decimal annualRate = IsPremiumActive ? 0.18m : 0.25m;
-            decimal monthlyInterest = CreditPrincipal * (annualRate / 12.0m);
-            CreditAccumulatedInterest += monthlyInterest;
-            CreditMonthsPassed++;
-            activeAccount.TransactionHistory.Add(new Transaction(Guid.NewGuid(), Math.Round(monthlyInterest, 2), TransactionType.Withdrawal, DateTime.Now));            
-            RepayAmount = Math.Round(CreditPrincipal + CreditAccumulatedInterest, 2); 
-            somethingHappened = true;
+            decimal paymentToDeduct = Math.Min(MonthlyCreditPayment, CreditTotalDebt);
+
+            if (activeAccount.Balance >= paymentToDeduct)
+            {
+                activeAccount.Withdraw(paymentToDeduct);
+                CreditTotalDebt -= paymentToDeduct;
+                CreditMonthsPassed++;
+                somethingHappened = true;
+
+                if (CreditTotalDebt <= 0 || CreditMonthsPassed >= TargetCreditMonths)
+                {
+                    CreditTotalDebt = 0;
+                    CreditPrincipal = 0;
+                    MonthlyCreditPayment = 0;
+                    SystemMessage = $"⏳ Минув 1 місяць! 🎉 Кредит повністю закрито (списано останій платіж {paymentToDeduct:N2} ₴)!";
+                }
+                else
+                {
+                    SystemMessage = $"⏳ Минув 1 місяць! Автоматично списано щомісячний платіж {paymentToDeduct:N2} ₴. Залишок боргу: {CreditTotalDebt:N2} ₴.";
+                }
+            }
+            else
+            {
+                SystemMessage = $"⚠️ Увага! Недостатньо коштів на картці для автоматичного списання щомісячного платежу ({paymentToDeduct:N2} ₴)!";
+            }
         }
 
         if (ActiveDepositPrincipal > 0)
@@ -669,18 +721,24 @@ private void SaveAllData()
             somethingHappened = true;
         }
 
-        if (SystemMessage.Contains("Термін дії Premium вичерпано!")) 
+        if (!somethingHappened)
         {
-        }
-        else if (somethingHappened) 
-        { 
-            SystemMessage = "⏳ Минув 1 місяць! Відсотки записано в історію та оновлено."; 
-        }
-        else 
-        { 
-            SystemMessage = "⏳ Минув 1 місяць... Але у вас немає кредитів, депозитів чи підписок."; 
+            SystemMessage = "⏳ Минув 1 місяць... Активних операцій немає.";
         }
 
+        SaveAllData();
+    }
+
+    private void RepayCreditEarly()
+    {
+        if (CreditTotalDebt <= 0) return;
+        if (activeAccount.Balance < CreditTotalDebt) { SystemMessage = "❌ Недостатньо коштів на картці для повного дострокового погашення!"; return; }
+
+        activeAccount.Withdraw(CreditTotalDebt);
+        SystemMessage = $"🎉 Кредит достроково закрито! Сплачено {CreditTotalDebt:N2} ₴.";
+        CreditTotalDebt = 0;
+        CreditPrincipal = 0;
+        MonthlyCreditPayment = 0;
         SaveAllData();
     }
 
@@ -709,65 +767,6 @@ private void SaveAllData()
         activeAccount.Deposit(total);
         SystemMessage = $"✅ Депозит закрито! Повернуто {total:N2} ₴.";
         ActiveDepositPrincipal = 0; ActiveDepositAccumulatedInterest = 0;
-        SaveAllData();
-    }
-
-    private void TakeCredit()
-    {
-        if (CreditPrincipal > 0) { SystemMessage = "❌ Спершу погасіть існуючий кредит!"; return; }
-        if (CreditInputAmount <= 0) return;
-
-        CreditPrincipal = CreditInputAmount;
-        TargetCreditMonths = CreditMonths;
-        CreditMonthsPassed = 0;
-        
-        RepayAmount = CreditPrincipal; 
-
-        activeAccount.Deposit(CreditInputAmount);
-        SaveAllData();
-        SystemMessage = $"💸 Видано кредит на {CreditInputAmount:N2} ₴!";
-    }
-
-    private void RepayCreditPartial()
-    {
-        if (RepayAmount <= 0) return;
-        if (activeAccount.Balance < RepayAmount) { SystemMessage = "❌ Недостатньо коштів на балансі!"; return; }
-
-        activeAccount.Withdraw(RepayAmount);
-        decimal remaining = RepayAmount;
-
-        if (remaining >= CreditAccumulatedInterest) {
-            remaining -= CreditAccumulatedInterest;
-            CreditAccumulatedInterest = 0;
-        } else {
-            CreditAccumulatedInterest -= remaining;
-            remaining = 0;
-        }
-
-        if (remaining > 0) {
-            if (remaining >= CreditPrincipal) {
-                remaining -= CreditPrincipal; 
-                CreditPrincipal = 0;
-                
-                if (remaining > 0) 
-                {
-                    activeAccount.Deposit(remaining); 
-                    SystemMessage = $"🎉 Кредит повністю погашено! Здача {Math.Round(remaining, 2)} ₴ повернута на картку.";
-                }
-                else
-                {
-                    SystemMessage = "🎉 Кредит повністю погашено без здачі!";
-                }
-            } else {
-                CreditPrincipal -= remaining;
-                SystemMessage = $"✅ Оплата пройшла! Тіло кредиту зменшилось.";
-            }
-        } else {
-            SystemMessage = $"✅ Сплачено відсотки по кредиту.";
-        }
-
-        RepayAmount = (CreditPrincipal > 0) ? Math.Round(CreditPrincipal + CreditAccumulatedInterest, 2) : 0;
-        
         SaveAllData();
     }
 }

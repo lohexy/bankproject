@@ -2,7 +2,6 @@ using System;
 
 namespace BankEmulator.Domain
 {
-    // Перечисление типов транзакций
     public enum TransactionType
     {
         Deposit,
